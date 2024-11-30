@@ -23,7 +23,7 @@ def data_augmentation_cpu(input_dir, output_dir):
 
     print(f"Numero di immagini trovate: {num_images}")
     
-    start_time = time.time()
+    start_time = time.perf_counter()
     total_generated_images = 0
 
     # Elaborazione di ogni immagine
@@ -42,11 +42,11 @@ def data_augmentation_cpu(input_dir, output_dir):
             cv2.imwrite(output_path, rotated_image)
             total_generated_images += 1
 
-    end_time = time.time()
+    end_time = time.perf_counter()
 
     # Stampa statistiche
     print("\n--- Report Finale ---")
-    print(f"Tempo totale di elaborazione: {end_time - start_time:.2f} secondi")
+    print(f"Tempo totale di elaborazione: {end_time - start_time:.6f} secondi")
     print(f"Numero immagini iniziali: {num_images}")
     print(f"Numero immagini generate: {total_generated_images}")
 
