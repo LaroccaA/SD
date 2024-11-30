@@ -1,0 +1,12 @@
+Esempio di Sequenza
+
+1.  Blocchi e Thread Ottimali: Configura i blocchi per un utilizzo efficiente della GPU.
+2.  Ridurre Accessi Globali: Integra la memoria condivisa nel kernel.
+3.  Parallelizzare gli Angoli: Aggiungi la terza dimensione per gestire gli angoli.
+4.  Overlapping Computation e Memoria: Introduci CUDA streams.
+5.  Texture Memory: Sostituisci la memoria globale con texture memory.
+6.  Profiling e Analisi: Identifica altre aree critiche.
+7.  Ridurre il Raggio della Memoria Globale: Riorganizza i dati per la coalescenza.
+8.  Quantizzazione dei Dati: Usa tipi di dati a precisione ridotta.
+9.  Funzioni Intrinseche: Ottimizza le operazioni matematiche.
+10. Kernel Multipli: Elabora più immagini in parallelo.
