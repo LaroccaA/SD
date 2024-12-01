@@ -6,16 +6,29 @@ import pycuda.driver as cuda
 import pycuda.autoinit
 from pycuda.compiler import SourceModule
 
-# Kernel CUDA semplice per rotazione immagini
+# Kernel CUDA ottimizzato con memoria condivisa
 kernel_code = """
 __global__ void rotate_image(float *input, float *output, int width, int height, float angle) {
+    extern __shared__ float tile[];
+    
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-    if (x < width && y < height) {
-        float centerX = width / 2.0;
-        float centerY = height / 2.0;
+    int local_x = threadIdx.x;
+    int local_y = threadIdx.y;
 
+    // Calcolo centro immagine
+    float centerX = width / 2.0;
+    float centerY = height / 2.0;
+
+    // Caricamento nella memoria condivisa
+    if (x < width && y < height) {
+        tile[local_y * blockDim.x + local_x] = input[y * width + x];
+    }
+    __syncthreads();
+
+    if (x < width && y < height) {
+        // Calcolo nuova posizione
         float newX = cos(angle) * (x - centerX) - sin(angle) * (y - centerY) + centerX;
         float newY = sin(angle) * (x - centerX) + cos(angle) * (y - centerY) + centerY;
 
@@ -23,9 +36,10 @@ __global__ void rotate_image(float *input, float *output, int width, int height,
         int srcY = (int)newY;
 
         if (srcX >= 0 && srcX < width && srcY >= 0 && srcY < height) {
-            output[y * width + x] = input[srcY * width + srcX];
+            // Accesso alla memoria condivisa
+            output[y * width + x] = tile[(srcY % blockDim.y) * blockDim.x + (srcX % blockDim.x)];
         } else {
-            output[y * width + x] = 0.0f;
+            output[y * width + x] = 0.0f; // Riempimento con nero
         }
     }
 }
@@ -60,7 +74,7 @@ def data_augmentation_gpu(input_dir, output_dir):
     input_gpu = cuda.mem_alloc(image_memory_size)
     output_gpu = cuda.mem_alloc(image_memory_size)
 
-        # Configurazioni di test per blocchi
+    # Configurazioni di test per blocchi
     block_sizes = [(8, 8, 1), (16, 16, 1), (32, 32, 1)]
 
     for block in block_sizes:
@@ -70,7 +84,8 @@ def data_augmentation_gpu(input_dir, output_dir):
             int(np.ceil(height / block[1])),
             1
         )
-        print(f"\nTesting configuration - Block: {block}, Grid: {grid}")
+        shared_memory_size = block[0] * block[1] * np.float32().nbytes
+        print(f"\nTesting configuration - Block: {block}, Grid: {grid}, Shared Memory: {shared_memory_size} bytes")
 
         total_time = 0.0
 
@@ -96,7 +111,16 @@ def data_augmentation_gpu(input_dir, output_dir):
 
                 # Lancia il kernel
                 start = time.perf_counter()
-                rotate_image_kernel(input_gpu, output_gpu, np.int32(width), np.int32(height), radians, block=block, grid=grid)
+                rotate_image_kernel(
+                    input_gpu, 
+                    output_gpu, 
+                    np.int32(width), 
+                    np.int32(height), 
+                    radians, 
+                    block=block, 
+                    grid=grid, 
+                    shared=shared_memory_size
+                )
                 cuda.Context.synchronize()
                 end = time.perf_counter()
 
@@ -112,7 +136,6 @@ def data_augmentation_gpu(input_dir, output_dir):
 
         print(f"Tempo totale per configurazione {block}: {total_time:.6f} secondi")
         print(f"Tempo medio per immagine: {total_time / num_images:.6f} secondi\n")
-
 
     # Svuota la directory di output
     print("\nEliminazione delle immagini generate...")

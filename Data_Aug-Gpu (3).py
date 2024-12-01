@@ -6,16 +6,31 @@ import pycuda.driver as cuda
 import pycuda.autoinit
 from pycuda.compiler import SourceModule
 
-# Kernel CUDA semplice per rotazione immagini
+# Kernel CUDA ottimizzato con memoria condivisa e parallelizzazione degli angoli
 kernel_code = """
-__global__ void rotate_image(float *input, float *output, int width, int height, float angle) {
+__global__ void rotate_image(float *input, float *output, int width, int height, float *angles) {
+    extern __shared__ float tile[];
+    
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int angle_idx = blockIdx.z; // Indice della terza dimensione (angolo)
+
+    int local_x = threadIdx.x;
+    int local_y = threadIdx.y;
+
+    // Calcolo centro immagine
+    float centerX = width / 2.0;
+    float centerY = height / 2.0;
+
+    // Caricamento nella memoria condivisa
+    if (x < width && y < height) {
+        tile[local_y * blockDim.x + local_x] = input[y * width + x];
+    }
+    __syncthreads();
 
     if (x < width && y < height) {
-        float centerX = width / 2.0;
-        float centerY = height / 2.0;
-
+        // Calcolo nuova posizione
+        float angle = angles[angle_idx];
         float newX = cos(angle) * (x - centerX) - sin(angle) * (y - centerY) + centerX;
         float newY = sin(angle) * (x - centerX) + cos(angle) * (y - centerY) + centerY;
 
@@ -23,9 +38,9 @@ __global__ void rotate_image(float *input, float *output, int width, int height,
         int srcY = (int)newY;
 
         if (srcX >= 0 && srcX < width && srcY >= 0 && srcY < height) {
-            output[y * width + x] = input[srcY * width + srcX];
+            output[(angle_idx * height + y) * width + x] = tile[(srcY % blockDim.y) * blockDim.x + (srcX % blockDim.x)];
         } else {
-            output[y * width + x] = 0.0f;
+            output[(angle_idx * height + y) * width + x] = 0.0f; // Riempimento con nero
         }
     }
 }
@@ -55,12 +70,18 @@ def data_augmentation_gpu(input_dir, output_dir):
     height, width = sample_image.shape
     print(f"Dimensioni immagine: {height}x{width}")
     image_memory_size = height * width * np.float32().nbytes
+    output_memory_size = height * width * len(range(360)) * np.float32().nbytes
 
     # Inizializza la memoria sulla GPU
     input_gpu = cuda.mem_alloc(image_memory_size)
-    output_gpu = cuda.mem_alloc(image_memory_size)
+    output_gpu = cuda.mem_alloc(output_memory_size)
+    angles_gpu = cuda.mem_alloc(360 * np.float32().nbytes)
 
-        # Configurazioni di test per blocchi
+    # Prepara gli angoli in radianti
+    angles = np.radians(np.arange(360)).astype(np.float32)
+    cuda.memcpy_htod(angles_gpu, angles)
+
+    # Configurazioni di test per blocchi
     block_sizes = [(8, 8, 1), (16, 16, 1), (32, 32, 1)]
 
     for block in block_sizes:
@@ -68,9 +89,10 @@ def data_augmentation_gpu(input_dir, output_dir):
         grid = (
             int(np.ceil(width / block[0])),
             int(np.ceil(height / block[1])),
-            1
+            len(angles)  # Terza dimensione per gli angoli
         )
-        print(f"\nTesting configuration - Block: {block}, Grid: {grid}")
+        shared_memory_size = block[0] * block[1] * np.float32().nbytes
+        print(f"\nTesting configuration - Block: {block}, Grid: {grid}, Shared Memory: {shared_memory_size} bytes")
 
         total_time = 0.0
 
@@ -90,29 +112,34 @@ def data_augmentation_gpu(input_dir, output_dir):
             # Copia immagine nella GPU
             cuda.memcpy_htod(input_gpu, image)
 
-            # Esegui la rotazione per 360 gradi
-            for angle in range(360):
-                radians = np.radians(angle).astype(np.float32)
+            # Lancia il kernel
+            start = time.perf_counter()
+            rotate_image_kernel(
+                input_gpu, 
+                output_gpu, 
+                np.int32(width), 
+                np.int32(height), 
+                angles_gpu, 
+                block=block, 
+                grid=grid, 
+                shared=shared_memory_size
+            )
+            cuda.Context.synchronize()
+            end = time.perf_counter()
 
-                # Lancia il kernel
-                start = time.perf_counter()
-                rotate_image_kernel(input_gpu, output_gpu, np.int32(width), np.int32(height), radians, block=block, grid=grid)
-                cuda.Context.synchronize()
-                end = time.perf_counter()
+            # Copia il risultato dalla GPU
+            output_images = np.empty((360, height, width), dtype=np.float32)
+            cuda.memcpy_dtoh(output_images, output_gpu)
 
-                # Copia il risultato dalla GPU
-                output_image = np.empty_like(image)
-                cuda.memcpy_dtoh(output_image, output_gpu)
+            # Salva tutte le immagini ruotate
+            for angle_idx, rotated_image in enumerate(output_images):
+                output_filename = f"{os.path.splitext(filename)[0]}_rotated_{angle_idx}_block{block[0]}.png"
+                cv2.imwrite(os.path.join(output_dir, output_filename), rotated_image)
 
-                # Salva l'immagine ruotata
-                output_filename = f"{os.path.splitext(filename)[0]}_rotated_{angle}_block{block[0]}.png"
-                cv2.imwrite(os.path.join(output_dir, output_filename), output_image)
-
-                total_time += (end - start)
+            total_time += (end - start)
 
         print(f"Tempo totale per configurazione {block}: {total_time:.6f} secondi")
         print(f"Tempo medio per immagine: {total_time / num_images:.6f} secondi\n")
-
 
     # Svuota la directory di output
     print("\nEliminazione delle immagini generate...")
