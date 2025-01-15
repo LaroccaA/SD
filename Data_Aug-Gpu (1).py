@@ -121,8 +121,8 @@ def data_augmentation_gpu(input_dir, output_dir):
     print("Directory di output svuotata.")
 
 if __name__ == "__main__":
-    input_folder = r"C:/Users/andre/Desktop/Uni/Appunti/Sistemi Digitali/Progetto/Dataset"
-    output_folder = r"C:/Users/andre/Desktop/Uni/Appunti/Sistemi Digitali/Progetto/Dataset_augmentated"
+    input_folder = r"Dataset"
+    output_folder = r"Dataset_augmentated"
     
     # Creazione della directory di output se non esiste
     os.makedirs(output_folder, exist_ok=True)
