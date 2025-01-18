@@ -1,2 +1,1 @@
-Image Name,Angle,Kernel Size,Time (s)
-4k.jpg,90,129,876.9509282112122
+Image Name,Resolution,Angle,Threads Per Block,Time (s)
