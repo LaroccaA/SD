@@ -30,49 +30,32 @@ __global__ void rotate_image_kernel(unsigned char* pixels, unsigned char* rotate
 """
 
 # Kernel CUDA per applicare il blur (convoluzione 2D)
-CUDA_BLUR_KERNEL_SHARED = """
-__global__ void blur_kernel_shared(unsigned char* pixels, unsigned char* blurred_img, int width, int height, int kernel_size) {
+CUDA_BLUR_KERNEL = """
+__global__ void blur_kernel(unsigned char* pixels, unsigned char* blurred_img, int width, int height, int kernel_size) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-    int half_kernel = kernel_size / 2;
-
-    // Memoria condivisa per un blocco di dimensioni blockDim.x * blockDim.y
-    __shared__ unsigned char shared_mem[32 + 2 * 16][32 + 2 * 16][3];  // Memoria condivisa con padding
-
-    // Caricamento nella memoria condivisa (i thread caricano i dati nelle celle appropriate)
     if (x < width && y < height) {
-        int idx = (y * width + x) * 3;
-        shared_mem[threadIdx.y + half_kernel][threadIdx.x + half_kernel][0] = pixels[idx];
-        shared_mem[threadIdx.y + half_kernel][threadIdx.x + half_kernel][1] = pixels[idx + 1];
-        shared_mem[threadIdx.y + half_kernel][threadIdx.x + half_kernel][2] = pixels[idx + 2];
-    }
-
-    // Sincronizzazione dei thread per garantire che tutti abbiano caricato i dati nella memoria condivisa
-    __syncthreads();
-
-    // Eseguiamo il blur solo se il pixel è all'interno dell'immagine
-    if (x < width && y < height) {
+        int half_kernel = kernel_size / 2;
         float r = 0, g = 0, b = 0;
         int count = 0;
 
-        // Applichiamo la convoluzione con una finestra quadrata
+        // Esegui la convoluzione con una finestra quadrata
         for (int ky = -half_kernel; ky <= half_kernel; ky++) {
             for (int kx = -half_kernel; kx <= half_kernel; kx++) {
-                int tx = threadIdx.x + kx + half_kernel;
-                int ty = threadIdx.y + ky + half_kernel;
+                int tx = x + kx;
+                int ty = y + ky;
 
-                // Verifica che i dati siano validi nella memoria condivisa
-                if (tx >= 0 && tx < blockDim.x + kernel_size - 1 && ty >= 0 && ty < blockDim.y + kernel_size - 1) {
-                    r += shared_mem[ty][tx][0];
-                    g += shared_mem[ty][tx][1];
-                    b += shared_mem[ty][tx][2];
+                if (tx >= 0 && tx < width && ty >= 0 && ty < height) {
+                    int idx = (ty * width + tx) * 3;
+                    r += pixels[idx];
+                    g += pixels[idx + 1];
+                    b += pixels[idx + 2];
                     count++;
                 }
             }
         }
 
-        // Scriviamo il risultato nella posizione appropriata nell'immagine sfocata
         int blurred_idx = (y * width + x) * 3;
         blurred_img[blurred_idx] = r / count;
         blurred_img[blurred_idx + 1] = g / count;
@@ -206,7 +189,7 @@ def process_images(input_folder, angles, report_file, output_folder):
                     rotated_img, new_width, new_height = rotate_image_cuda(img, width, height, angle, threads_per_block)
                     
                     # Applichiamo il blur
-                    kernel_size = 129  # Esempio con un kernel 5x5
+                    kernel_size = 59
                     blurred_img = blur_image_cuda(rotated_img, new_width, new_height, kernel_size, threads_per_block)
 
                     end_time = time.time()
@@ -229,4 +212,4 @@ if __name__ == "__main__":
     report_file = "./report.csv"
     output_folder = "./Processed_Images"
 
-    process_images(input_folder, angles, report_file, output_folder)
+    process_images(input_folder, angles, report_file, output_folder)  
